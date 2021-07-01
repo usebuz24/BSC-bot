@@ -43,18 +43,19 @@ namespace TelegramCryptoChatBot
         static async void OnMessageHandler(object sender, Telegram.Bot.Args.MessageEventArgs e)
         {
             Console.WriteLine($"Получено сообщение в чате {e.Message.From.Username}.");
+            #region /start
             if (e.Message.Text == "/start")
             {
                 try
                 {
-                    var AddUser = $"INSERT INTO users VALUES('{e.Message.Chat.Id}', '{e.Message.From.Username}', 'mainMenu')";
+                    var AddUser = $"INSERT INTO users VALUES('{e.Message.Chat.Id}', '{e.Message.From.Username}', '{States.MAIN_MENU}')";
                     MySqlCommand command = new MySqlCommand(AddUser, SqlConn);
                     command.ExecuteNonQuery();
                 }
                 catch(Exception a)
                 {
                     Console.WriteLine(a.Message + " - Такой пользователь уже есть в базе");
-                    SetState("mainMenu", e);
+                    SetState(States.MAIN_MENU, e);
                 }
                 await CryptoBot.SendTextMessageAsync(
                   chatId: e.Message.Chat,
@@ -62,17 +63,10 @@ namespace TelegramCryptoChatBot
                   text: "\U0001F916 Привет, я помогу тебе узнать цену на интересующую тебя криптовалюту в сети BSC"
                 );
             }
-            /*
-                State List:
-                mainMenu,
-                favoriteMenu,
-                sendContract,
-                addFavorite...
-
-            */
+            #endregion
             var currentState = GetState(e);
             #region mainMenu
-            if (currentState == "mainMenu")
+            if (currentState == States.MAIN_MENU)
             {
                 if (e.Message.Text == "Цена токена")
                 {
@@ -83,7 +77,7 @@ namespace TelegramCryptoChatBot
                       text: "Введите контракт BSC токена:"
 
                     );
-                    SetState("sendContract", e);
+                    SetState(States.SENDING_CONTRACT, e);
                     return;
                 }
                 if (e.Message.Text == "Избранное")
@@ -94,13 +88,13 @@ namespace TelegramCryptoChatBot
                       replyToMessageId: e.Message.MessageId,
                       text: "Что сделать?"
                     );
-                    SetState("favoriteMenu", e);
+                    SetState(States.FAVORITE_MENU, e);
                     return;
                 }
             }
             #endregion
             #region favoriteMenu
-            if (currentState == "favoriteMenu")
+            if (currentState == States.FAVORITE_MENU)
             {
                 if (e.Message.Text == "Назад")
                 {
@@ -109,7 +103,7 @@ namespace TelegramCryptoChatBot
                       replyMarkup: Keyboards.MainMenu,                    
                       text: "Окей!"
                     );
-                    SetState("mainMenu", e);
+                    SetState(States.MAIN_MENU, e);
                     return;
                 }
                 if (e.Message.Text == "Добавить токен")
@@ -118,7 +112,7 @@ namespace TelegramCryptoChatBot
                       chatId: e.Message.Chat,
                       text: "Введите контракт токена который хотите добавить:"
                     );
-                    SetState("addFavorite", e);
+                    SetState(States.FAVORITE_ADDING, e);
                     return;
                 }
                 
@@ -126,11 +120,11 @@ namespace TelegramCryptoChatBot
             }
             #endregion
             #region sendContract
-            if (currentState == "sendContract")
+            if (currentState == States.SENDING_CONTRACT)
             {
                 string contract = e.Message.Text;
                 await Task.Run(() => GetPrice(contract, e));
-                SetState("mainMenu", e);
+                SetState(States.MAIN_MENU, e);
                 return;
             }
             #endregion
