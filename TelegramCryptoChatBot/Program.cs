@@ -39,7 +39,6 @@ namespace TelegramCryptoChatBot
             Console.Read();
             CryptoBot.StopReceiving();
         }
-
         static async void OnMessageHandler(object sender, Telegram.Bot.Args.MessageEventArgs e)
         {
             Console.WriteLine($"Получено сообщение в чате {e.Message.From.Username}.");
@@ -73,7 +72,6 @@ namespace TelegramCryptoChatBot
                     await CryptoBot.SendTextMessageAsync(
                       chatId: e.Message.Chat,
                       replyMarkup: Keyboards.RemoveMenu,
-                      replyToMessageId: e.Message.MessageId,
                       text: "Введите контракт BSC токена:"
 
                     );
@@ -85,7 +83,6 @@ namespace TelegramCryptoChatBot
                     await CryptoBot.SendTextMessageAsync(
                       chatId: e.Message.Chat,
                       replyMarkup: Keyboards.FavoriteMenu,
-                      replyToMessageId: e.Message.MessageId,
                       text: "Что сделать?"
                     );
                     SetState(States.FAVORITE_MENU, e);
@@ -101,7 +98,7 @@ namespace TelegramCryptoChatBot
                     await CryptoBot.SendTextMessageAsync(
                       chatId: e.Message.Chat,
                       replyMarkup: Keyboards.MainMenu,                    
-                      text: "Окей!"
+                      text: "..."
                     );
                     SetState(States.MAIN_MENU, e);
                     return;
@@ -116,7 +113,6 @@ namespace TelegramCryptoChatBot
                     return;
                 }
                 
-
             }
             #endregion
             #region sendContract
@@ -139,12 +135,14 @@ namespace TelegramCryptoChatBot
                 {
                     StreamReader reader = new StreamReader(rawData);
                     string responseFromServer = reader.ReadLine();
-                    
+                    var split = responseFromServer.Split('"');
                     await CryptoBot.SendTextMessageAsync(
                         chatId: e.Message.Chat,
                         replyMarkup: Keyboards.MainMenu,
                         replyToMessageId: e.Message.MessageId,
-                        text: responseFromServer
+                        text: $"Имя: {split[7]}\n" +
+                              $"Тикер: {split[11].ToUpper()}\n" +
+                              $"Цена в USD: {split[15].Substring(0, 10)}\n"
                     );
                 }
             }
