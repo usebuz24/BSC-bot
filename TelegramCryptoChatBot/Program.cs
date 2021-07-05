@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,6 +11,7 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 
 using MySqlConnector;
+using Telegram.Bot.Args;
 
 namespace TelegramCryptoChatBot
 {
@@ -39,7 +41,7 @@ namespace TelegramCryptoChatBot
             Console.Read();
             CryptoBot.StopReceiving();
         }
-        static async void OnMessageHandler(object sender, Telegram.Bot.Args.MessageEventArgs e)
+        static async void OnMessageHandler(object sender, MessageEventArgs e)
         {
             Console.WriteLine($"Получено сообщение в чате {e.Message.From.Username}.");
             #region /start
@@ -107,12 +109,25 @@ namespace TelegramCryptoChatBot
                 {
                     await CryptoBot.SendTextMessageAsync(
                       chatId: e.Message.Chat,
+                      replyMarkup: Keyboards.RemoveMenu,
                       text: "Введите контракт токена который хотите добавить:"
                     );
                     SetState(States.FAVORITE_ADDING, e);
                     return;
                 }
-                
+                if (e.Message.Text == "Цены токенов")
+                {
+                    await CryptoBot.SendTextMessageAsync(
+                      chatId: e.Message.Chat,
+                      replyMarkup: Keyboards.RemoveMenu,
+                      text: "Запрос обрабатывается..."
+                    );
+                    SetState(States.LIST_PRICES, e);
+                    await Task.Run(() => ListPricesForAllContracts(e));
+                    //SetState(States.FAVORITE_MENU, e);
+                    return;
+                }
+
             }
             #endregion
             #region sendContract
@@ -124,8 +139,112 @@ namespace TelegramCryptoChatBot
                 return;
             }
             #endregion
+            #region favoriteAdding
+            if (currentState == States.FAVORITE_ADDING)
+            {
+                string contract = e.Message.Text;
+                await Task.Run(() => AddToFavorite(contract, e));
+                return;
+            }
+            #endregion
         }
-        static async void GetPrice(string contract, Telegram.Bot.Args.MessageEventArgs e)
+        
+        static async void ListPricesForAllContracts(MessageEventArgs e) //Метод написан максимально колхозно, когда будет время сделать его лаконичней - сделаю.
+        {
+            List<string[]> arrayList = new List<string[]>();
+            using (var command = new MySqlCommand($"SELECT ticker, contract FROM choosencontracts WHERE userID = {e.Message.From.Id}", SqlConn))
+            {
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        string ticker = reader.GetString(0);
+                        string price;
+                        WebRequest request = WebRequest.Create("https://api.pancakeswap.info/api/v2/tokens/" + reader.GetString(1));
+                        WebResponse response = request.GetResponse();
+                        using (Stream rawData = response.GetResponseStream())
+                        {
+                            StreamReader reader2 = new StreamReader(rawData);
+                            string responseFromServer = reader2.ReadLine();
+                            var split = responseFromServer.Split('"');
+                            price = split[15].Substring(0, 10);
+                        }
+                        arrayList.Add(new string[] { ticker, price });
+                    }
+                }
+            }
+            string s = "";
+            int i = 1;
+            foreach (var item in arrayList)
+            {
+                s += $"{i}){item[0]}: {item[1]}\n";
+                i++;
+            }
+            await CryptoBot.SendTextMessageAsync(
+                        chatId: e.Message.Chat,
+                        replyMarkup: Keyboards.FavoriteMenu,
+                        replyToMessageId: e.Message.MessageId,
+                        text: s
+                    );
+            SetState(States.FAVORITE_MENU, e);
+        }
+
+        static async void AddToFavorite(string contract, MessageEventArgs e)
+        {
+            bool flag = false; //*
+            await using (var command = new MySqlCommand($"SELECT contract FROM choosencontracts WHERE userID = {e.Message.From.Id}", SqlConn))
+            {
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        if (reader.GetString(0) == contract) flag = true; //*
+                    }
+                }
+            }
+            if (flag)
+            { 
+                await CryptoBot.SendTextMessageAsync(
+                    chatId: e.Message.Chat,
+                    replyMarkup: Keyboards.FavoriteMenu,
+                    replyToMessageId: e.Message.MessageId,
+                    text: "Этот контракт уже есть в списке"
+                    );                           
+                                                    //* Этот "выворот" с доп. флагом сделан намеренно, так как при вызове метода SetState() внутри using'a выше, он(метод) попытается использовать
+                SetState(States.FAVORITE_MENU, e);  //  занятый поток подключения к sql, что вызовет исключение. Технически, я мог бы создать дополнительное подключение, но это лишняя  
+                return;                             //  секунда-две, что, по моему ощущению, достаточно много, когда мы говорим о боте в мессенджере.
+            }
+            try
+            {
+                WebRequest request = WebRequest.Create("https://api.pancakeswap.info/api/v2/tokens/" + contract);
+                WebResponse response = request.GetResponse();
+                using (Stream rawData = response.GetResponseStream())
+                {
+                    StreamReader reader = new StreamReader(rawData);
+                    string responseFromServer = reader.ReadLine();
+                    var split = responseFromServer.Split('"');
+                    var command = $"INSERT INTO choosencontracts VALUES('{split[11].ToUpper()}', '{contract}', '{e.Message.From.Id}');";
+                    MySqlCommand addContract = new MySqlCommand(command, SqlConn);
+                    addContract.ExecuteNonQuery();
+                }
+            }
+            catch
+            {
+                await CryptoBot.SendTextMessageAsync(
+                        chatId: e.Message.Chat,
+                        replyMarkup: Keyboards.FavoriteMenu,
+                        replyToMessageId: e.Message.MessageId,
+                        text: "Что-то пошло не так, проверьте правильность контракта"
+                    );
+            }
+            finally
+            {
+                SetState(States.FAVORITE_MENU, e);
+            }
+            
+        }
+
+        static async void GetPrice(string contract, MessageEventArgs e)
         {
             try
             {
@@ -157,18 +276,25 @@ namespace TelegramCryptoChatBot
             }
 
         }
-        static void SetState(string state, Telegram.Bot.Args.MessageEventArgs e)
+        static void SetState(string state, MessageEventArgs e)
         {
             var command = $"UPDATE users SET currentState = '{state}' WHERE userID = '{e.Message.From.Id}';";
             MySqlCommand changeState = new MySqlCommand(command, SqlConn);
             changeState.ExecuteNonQuery();
         }
-        static string GetState(Telegram.Bot.Args.MessageEventArgs e)
+        static string GetState(MessageEventArgs e)
         {
-            var sql = $"SELECT currentState FROM users WHERE userID = '{e.Message.Chat.Id}'";
-            MySqlCommand command = new MySqlCommand(sql, SqlConn);
-            string state = command.ExecuteScalar().ToString();
-            return state;
+            try
+            {
+                var sql = $"SELECT currentState FROM users WHERE userID = '{e.Message.Chat.Id}'";
+                MySqlCommand command = new MySqlCommand(sql, SqlConn);
+                string state = command.ExecuteScalar().ToString();
+                return state;
+            }
+            catch
+            {
+                return "";
+            }
         }
     }
 }

@@ -10,5 +10,6 @@ namespace TelegramCryptoChatBot
         public const string FAVORITE_MENU = "1";
         public const string FAVORITE_ADDING = "2";
         public const string SENDING_CONTRACT = "3";
+        public const string LIST_PRICES = "4";
     }
 }

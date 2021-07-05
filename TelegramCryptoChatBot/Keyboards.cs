@@ -25,7 +25,8 @@ namespace TelegramCryptoChatBot
             {
                 new KeyboardButton[]
                 {
-                    new KeyboardButton("Цены всех токенов")
+                    new KeyboardButton("Цены токенов"),
+                    new KeyboardButton("Удалить токен"),
                 },
                 new KeyboardButton[]
                 {
