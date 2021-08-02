@@ -1,43 +1,31 @@
 using System;
 using System.IO;
 using System.Net;
-using System.Collections.Generic;
-using System.Threading;
+using System.Linq;
 using System.Threading.Tasks;
 
 using Telegram.Bot;
-using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;
-using Telegram.Bot.Types.ReplyMarkups;
 
-using MySqlConnector;
 using Telegram.Bot.Args;
+using TelegramCryptoChatBot.Models;
 
 namespace TelegramCryptoChatBot
 {
     class Program
     {
         static TelegramBotClient CryptoBot;
-        static string token = "1830595825:AAETdTaoSqldgfrWMoqUbitWotHq_XEUbkg";
-        static MySqlConnection SqlConn = new MySqlConnection("server = localhost; user = root; database = testkey; password = usebuz9090;");
-
         static void Main(string[] args)
         {
-            Console.WriteLine("Подключаю базу данных...");
-            try
+            string token;
+            using (var sr = new StreamReader("token.txt"))
             {
-                SqlConn.Open();
-                Console.WriteLine("Подключение успешно.");
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine("Ошибка: " + e.Message);
+                token = sr.ReadToEnd();
             }
 
             CryptoBot = new TelegramBotClient(token);
             CryptoBot.OnMessage += OnMessageHandler;
             CryptoBot.StartReceiving();
-            Console.WriteLine("Слушаю");
+            Console.WriteLine("Бот запущен.");
             Console.Read();
             CryptoBot.StopReceiving();
         }
@@ -47,16 +35,18 @@ namespace TelegramCryptoChatBot
             #region /start
             if (e.Message.Text == "/start")
             {
-                try
+                using (var DbContext = new bscBotContext())
                 {
-                    var AddUser = $"INSERT INTO users VALUES('{e.Message.Chat.Id}', '{e.Message.From.Username}', '{States.MAIN_MENU}')";
-                    MySqlCommand command = new MySqlCommand(AddUser, SqlConn);
-                    command.ExecuteNonQuery();
-                }
-                catch(Exception a)
-                {
-                    Console.WriteLine(a.Message + " - Такой пользователь уже есть в базе");
-                    SetState(States.MAIN_MENU, e);
+                    if (!DbContext.Users.Contains(new Models.User($"{e.Message.Chat.Id}")))
+                    {
+                        DbContext.Users.Add(new Models.User(e.Message.Chat.Id.ToString(), e.Message.Chat.Username, States.MAIN_MENU));
+                        DbContext.SaveChanges();
+                        Console.WriteLine("Новый пользователь добавлен.");
+                    }
+                    else
+                    {
+                        SetState(States.MAIN_MENU, e);
+                    }
                 }
                 await CryptoBot.SendTextMessageAsync(
                   chatId: e.Message.Chat,
@@ -115,16 +105,20 @@ namespace TelegramCryptoChatBot
                     SetState(States.FAVORITE_ADDING, e);
                     return;
                 }
-                if (e.Message.Text == "Цены токенов")
+                if (e.Message.Text == "Удалить токен")
                 {
                     await CryptoBot.SendTextMessageAsync(
                       chatId: e.Message.Chat,
                       replyMarkup: Keyboards.RemoveMenu,
-                      text: "Запрос обрабатывается..."
+                      text: "Введите номер токена который хотите удалить:"
                     );
-                    SetState(States.LIST_PRICES, e);
+                    SetState(States.DELETE_CONTRACT, e);
+                    return;
+                }
+                if (e.Message.Text == "Цены токенов")
+                {                  
                     await Task.Run(() => ListPricesForAllContracts(e));
-                    //SetState(States.FAVORITE_MENU, e);
+                    SetState(States.FAVORITE_MENU, e);
                     return;
                 }
 
@@ -144,41 +138,49 @@ namespace TelegramCryptoChatBot
             {
                 string contract = e.Message.Text;
                 await Task.Run(() => AddToFavorite(contract, e));
+                SetState(States.FAVORITE_MENU, e);
+                return;
+            }
+            #endregion
+            #region deleteContract
+            if (currentState == States.DELETE_CONTRACT)
+            {
+                string contractNum = e.Message.Text;
+                await Task.Run(() => DeleteContract(contractNum, e));
+                SetState(States.FAVORITE_MENU, e);
                 return;
             }
             #endregion
         }
-        
-        static async void ListPricesForAllContracts(MessageEventArgs e) //Метод написан максимально колхозно, когда будет время сделать его лаконичней - сделаю.
+        static async void ListPricesForAllContracts(MessageEventArgs e)
         {
-            List<string[]> arrayList = new List<string[]>();
-            using (var command = new MySqlCommand($"SELECT ticker, contract FROM choosencontracts WHERE userID = {e.Message.From.Id}", SqlConn))
-            {
-                using (var reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        string ticker = reader.GetString(0);
-                        string price;
-                        WebRequest request = WebRequest.Create("https://api.pancakeswap.info/api/v2/tokens/" + reader.GetString(1));
-                        WebResponse response = request.GetResponse();
-                        using (Stream rawData = response.GetResponseStream())
-                        {
-                            StreamReader reader2 = new StreamReader(rawData);
-                            string responseFromServer = reader2.ReadLine();
-                            var split = responseFromServer.Split('"');
-                            price = split[15].Substring(0, 10);
-                        }
-                        arrayList.Add(new string[] { ticker, price });
-                    }
-                }
-            }
+            await CryptoBot.SendTextMessageAsync(
+                      chatId: e.Message.Chat,
+                      replyMarkup: Keyboards.RemoveMenu,
+                      text: "Запрос обрабатывается..."
+                    );
             string s = "";
-            int i = 1;
-            foreach (var item in arrayList)
+            using (var DbContext = new bscBotContext())
             {
-                s += $"{i}){item[0]}: {item[1]}\n";
-                i++;
+                int i = 1;
+                var ChoosenContracts = DbContext.Choosencontracts.Where(item => item.UserId == e.Message.Chat.Id.ToString());
+                foreach(var item in ChoosenContracts)
+                {
+                    string ticker = item.Ticker;
+                    string price;
+                    
+                    WebRequest request = WebRequest.Create("https://api.pancakeswap.info/api/v2/tokens/" + item.Contract);
+                    WebResponse response = request.GetResponse();
+                    using (Stream rawData = response.GetResponseStream())
+                    {
+                        StreamReader reader = new StreamReader(rawData);
+                        string responseFromServer = reader.ReadLine();
+                        var split = responseFromServer.Split('"');
+                        price = split[15].Substring(0, 10);
+                    }
+                    s += $"{i}){ticker}: {price}\n";
+                    i++;
+                }
             }
             await CryptoBot.SendTextMessageAsync(
                         chatId: e.Message.Chat,
@@ -186,33 +188,22 @@ namespace TelegramCryptoChatBot
                         replyToMessageId: e.Message.MessageId,
                         text: s
                     );
-            SetState(States.FAVORITE_MENU, e);
         }
-
         static async void AddToFavorite(string contract, MessageEventArgs e)
         {
-            bool flag = false; //*
-            await using (var command = new MySqlCommand($"SELECT contract FROM choosencontracts WHERE userID = {e.Message.From.Id}", SqlConn))
+            using (var DbContext = new bscBotContext())
             {
-                using (var reader = command.ExecuteReader())
+                var query = DbContext.Choosencontracts.Where(item => item.Contract == contract && item.UserId == e.Message.Chat.Id.ToString());
+                foreach (var item in query)
                 {
-                    while (reader.Read())
-                    {
-                        if (reader.GetString(0) == contract) flag = true; //*
-                    }
+                    await CryptoBot.SendTextMessageAsync(
+                        chatId: e.Message.Chat,
+                        replyMarkup: Keyboards.FavoriteMenu,
+                        replyToMessageId: e.Message.MessageId,
+                        text: "Этот контракт уже есть в списке"
+                        );
+                    return;
                 }
-            }
-            if (flag)
-            { 
-                await CryptoBot.SendTextMessageAsync(
-                    chatId: e.Message.Chat,
-                    replyMarkup: Keyboards.FavoriteMenu,
-                    replyToMessageId: e.Message.MessageId,
-                    text: "Этот контракт уже есть в списке"
-                    );                           
-                                                    //* Этот "выворот" с доп. флагом сделан намеренно, так как при вызове метода SetState() внутри using'a выше, он(метод) попытается использовать
-                SetState(States.FAVORITE_MENU, e);  //  занятый поток подключения к sql, что вызовет исключение. Технически, я мог бы создать дополнительное подключение, но это лишняя  
-                return;                             //  секунда-две, что, по моему ощущению, достаточно много, когда мы говорим о боте в мессенджере.
             }
             try
             {
@@ -223,10 +214,18 @@ namespace TelegramCryptoChatBot
                     StreamReader reader = new StreamReader(rawData);
                     string responseFromServer = reader.ReadLine();
                     var split = responseFromServer.Split('"');
-                    var command = $"INSERT INTO choosencontracts VALUES('{split[11].ToUpper()}', '{contract}', '{e.Message.From.Id}');";
-                    MySqlCommand addContract = new MySqlCommand(command, SqlConn);
-                    addContract.ExecuteNonQuery();
-                }
+                    using (var DbContext = new bscBotContext())
+                    {
+                        DbContext.Choosencontracts.Add(new Choosencontract(split[11].ToUpper(), contract, e.Message.Chat.Id.ToString()));
+                        DbContext.SaveChanges();
+                    }
+                }   
+                await CryptoBot.SendTextMessageAsync(
+                        chatId: e.Message.Chat,
+                        replyMarkup: Keyboards.FavoriteMenu,
+                        replyToMessageId: e.Message.MessageId,
+                        text: "Готово."
+                    );
             }
             catch
             {
@@ -234,16 +233,42 @@ namespace TelegramCryptoChatBot
                         chatId: e.Message.Chat,
                         replyMarkup: Keyboards.FavoriteMenu,
                         replyToMessageId: e.Message.MessageId,
-                        text: "Что-то пошло не так, проверьте правильность контракта"
+                        text: "Что-то пошло не так, проверьте правильность контракта."
                     );
             }
-            finally
-            {
-                SetState(States.FAVORITE_MENU, e);
-            }
-            
-        }
 
+        }
+        static async void DeleteContract(string contractNum, MessageEventArgs e)
+        {
+            try
+            {
+                using (var DbContext = new bscBotContext())
+                {
+                    var contract = DbContext.Choosencontracts.Where(item => item.UserId == e.Message.Chat.Id.ToString())
+                                                             .Skip(Int32.Parse(contractNum) - 1)
+                                                             .First();
+
+                    DbContext.Remove(contract);
+                    DbContext.SaveChanges();
+                }
+            }
+            catch
+            {
+                await CryptoBot.SendTextMessageAsync(
+                       chatId: e.Message.Chat,
+                       replyMarkup: Keyboards.FavoriteMenu,
+                       replyToMessageId: e.Message.MessageId,
+                       text: "Некорректный ввод."
+                   );
+                return;
+            }
+            await CryptoBot.SendTextMessageAsync(
+                       chatId: e.Message.Chat,
+                       replyMarkup: Keyboards.FavoriteMenu,
+                       replyToMessageId: e.Message.MessageId,
+                       text: "Готово"
+                   );
+        }
         static async void GetPrice(string contract, MessageEventArgs e)
         {
             try
@@ -278,24 +303,20 @@ namespace TelegramCryptoChatBot
         }
         static void SetState(string state, MessageEventArgs e)
         {
-            var command = $"UPDATE users SET currentState = '{state}' WHERE userID = '{e.Message.From.Id}';";
-            MySqlCommand changeState = new MySqlCommand(command, SqlConn);
-            changeState.ExecuteNonQuery();
+            using (var DbContext = new bscBotContext())
+            {
+                DbContext.Users.Find(e.Message.Chat.Id.ToString())
+                           .CurrentState = state;
+                DbContext.SaveChanges();
+            }
         }
         static string GetState(MessageEventArgs e)
         {
-            try
+            using (var DbContext = new bscBotContext())
             {
-                var sql = $"SELECT currentState FROM users WHERE userID = '{e.Message.Chat.Id}'";
-                MySqlCommand command = new MySqlCommand(sql, SqlConn);
-                string state = command.ExecuteScalar().ToString();
-                return state;
-            }
-            catch
-            {
-                return "";
+                var user = DbContext.Users.Find(e.Message.Chat.Id.ToString());
+                return user.CurrentState;
             }
         }
     }
 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             

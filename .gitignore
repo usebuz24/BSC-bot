@@ -338,3 +338,8 @@ ASALocalRun/
 
 # BeatPulse healthcheck temp database
 healthchecksdb
+
+#token file
+TelegramCryptoChatBot\TelegramCryptoChatBot\bin\Debug\netcoreapp3.1\token.txt
+TelegramCryptoChatBot\bin\Debug\netcoreapp3.1\token.txt
+bin\Debug\netcoreapp3.1\token.txt
