@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.Json;
 
 using Telegram.Bot;
 
@@ -107,6 +108,7 @@ namespace TelegramCryptoChatBot
                 }
                 if (e.Message.Text == "Удалить токен")
                 {
+                    await Task.Run(() => GetFavorites(e));
                     await CryptoBot.SendTextMessageAsync(
                       chatId: e.Message.Chat,
                       replyMarkup: Keyboards.RemoveMenu,
@@ -175,19 +177,30 @@ namespace TelegramCryptoChatBot
                     {
                         StreamReader reader = new StreamReader(rawData);
                         string responseFromServer = reader.ReadLine();
-                        var split = responseFromServer.Split('"');
-                        price = split[15].Substring(0, 10);
+                        Contract restoredContract = JsonSerializer.Deserialize<Contract>(responseFromServer);
+                        price = restoredContract.data.price.Substring(0, 10);
                     }
                     s += $"{i}){ticker}: {price}\n";
                     i++;
                 }
             }
-            await CryptoBot.SendTextMessageAsync(
-                        chatId: e.Message.Chat,
-                        replyMarkup: Keyboards.FavoriteMenu,
-                        replyToMessageId: e.Message.MessageId,
-                        text: s
-                    );
+            if (s != "")
+            {
+                await CryptoBot.SendTextMessageAsync(
+                            chatId: e.Message.Chat,
+                            replyMarkup: Keyboards.FavoriteMenu,
+                            replyToMessageId: e.Message.MessageId,
+                            text: s
+                        );
+            }
+            else
+            {
+                await CryptoBot.SendTextMessageAsync(
+                            chatId: e.Message.Chat,
+                            replyMarkup: Keyboards.FavoriteMenu,
+                            text: "У вас пока нет избранных контрактов."
+                        );
+            }
         }
         static async void AddToFavorite(string contract, MessageEventArgs e)
         {
@@ -213,10 +226,10 @@ namespace TelegramCryptoChatBot
                 {
                     StreamReader reader = new StreamReader(rawData);
                     string responseFromServer = reader.ReadLine();
-                    var split = responseFromServer.Split('"');
+                    Contract restoredContract = JsonSerializer.Deserialize<Contract>(responseFromServer);
                     using (var DbContext = new bscBotContext())
                     {
-                        DbContext.Choosencontracts.Add(new Choosencontract(split[11].ToUpper(), contract, e.Message.Chat.Id.ToString()));
+                        DbContext.Choosencontracts.Add(new Choosencontract(restoredContract.data.symbol.ToUpper(), contract, e.Message.Chat.Id.ToString()));
                         DbContext.SaveChanges();
                     }
                 }   
@@ -237,6 +250,28 @@ namespace TelegramCryptoChatBot
                     );
             }
 
+        }
+        static async void GetFavorites(MessageEventArgs e)
+        {
+            string s = "";
+            using (var DbContext = new bscBotContext())
+            {
+                int i = 1;
+                var ChoosenContracts = DbContext.Choosencontracts.Where(item => item.UserId == e.Message.Chat.Id.ToString());
+                foreach (var item in ChoosenContracts)
+                {
+                    s += $"{i}){item.Ticker}\n";
+                    i++;
+                }
+            }
+            if (s != "")
+            {
+                await CryptoBot.SendTextMessageAsync(
+                            chatId: e.Message.Chat,
+                            replyMarkup: Keyboards.FavoriteMenu,
+                            text: s
+                        );
+            }
         }
         static async void DeleteContract(string contractNum, MessageEventArgs e)
         {
@@ -279,14 +314,16 @@ namespace TelegramCryptoChatBot
                 {
                     StreamReader reader = new StreamReader(rawData);
                     string responseFromServer = reader.ReadLine();
-                    var split = responseFromServer.Split('"');
+
+                    Contract restoredContract = JsonSerializer.Deserialize<Contract>(responseFromServer);
+
                     await CryptoBot.SendTextMessageAsync(
                         chatId: e.Message.Chat,
                         replyMarkup: Keyboards.MainMenu,
                         replyToMessageId: e.Message.MessageId,
-                        text: $"Имя: {split[7]}\n" +
-                              $"Тикер: {split[11].ToUpper()}\n" +
-                              $"Цена в USD: {split[15].Substring(0, 10)}\n"
+                        text: $"Имя: {restoredContract.data.name}\n" +
+                              $"Тикер: {restoredContract.data.symbol.ToUpper()}\n" +
+                              $"Цена в USD: {restoredContract.data.price.Substring(0, 10)}\n"
                     );
                 }
             }
